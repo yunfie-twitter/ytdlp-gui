@@ -1,0 +1,7 @@
+{
+  "version": "1.0.0",
+  "download_url": "https://github.com/yunfie-twitter/ytdlp-gui/releases/latest/download/ytdlp-gui.zip",
+  "changelog": "Initial release with full features",
+  "min_python_version": "3.8",
+  "release_date": "2025-11-27"
+}
