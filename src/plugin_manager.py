@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Plugin manager
+Plugin Manager
 """
 
 import os
 import sys
+import importlib
 import importlib.util
 from pathlib import Path
 
@@ -13,65 +14,123 @@ from pathlib import Path
 class PluginManager:
     """Manages plugins"""
     
-    def __init__(self, app):
-        self.app = app
-        self.plugins = []
-        self.hooks = {
-            'on_download_start': [],
-            'on_progress': [],
-            'on_complete': [],
-            'on_error': [],
-        }
+    def __init__(self, api):
+        self.api = api
         self.plugins_dir = Path('plugins')
+        self.plugins = []
+        
+        # Create plugins directory if not exists
         self.plugins_dir.mkdir(exist_ok=True)
+        
+        # Create example plugin
+        self._create_example_plugin()
+    
+    def _create_example_plugin(self):
+        """Create example plugin"""
+        example_file = self.plugins_dir / 'example_plugin.py.disabled'
+        
+        if not example_file.exists():
+            example_code = '''
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Example Plugin
+このファイルの拡張子を .py に変更すると有効化されます
+"""
+
+def register(app):
+    """
+    プラグイン登録関数
+    
+    Args:
+        app: AppAPI instance
+    """
+    app.log('例示プラグインが読み込まれました')
+    
+    # フックの登録
+    app.register_hook('on_download_start', on_download_start)
+    app.register_hook('on_complete', on_complete)
+    app.register_hook('on_error', on_error)
+    
+    # メニューアクションの追加
+    app.add_menu_action('Tools', '例示アクション', example_action)
+
+def on_download_start(info):
+    """ダウンロード開始時"""
+    print(f'プラグイン: ダウンロード開始 - {info["url"]}')
+
+def on_complete(info):
+    """ダウンロード完了時"""
+    print(f'プラグイン: ダウンロード完了 - {info.get("filename", "Unknown")}')
+
+def on_error(info):
+    """エラー発生時"""
+    print(f'プラグイン: エラー - {info.get("error", "Unknown")}')
+
+def example_action():
+    """例示アクション"""
+    print('例示アクションが実行されました')
+'''
+            try:
+                with open(example_file, 'w', encoding='utf-8') as f:
+                    f.write(example_code)
+            except Exception as e:
+                print(f'Failed to create example plugin: {e}')
     
     def load_plugins(self):
-        """Load all plugins from plugins directory"""
+        """Load all plugins"""
+        self.plugins.clear()
+        
         if not self.plugins_dir.exists():
             return
         
-        for file_path in self.plugins_dir.glob('*.py'):
-            if file_path.name.startswith('_'):
-                continue
-            
-            try:
-                self.load_plugin(file_path)
-            except Exception as e:
-                self.app.log(f"Failed to load plugin {file_path.name}: {e}")
-    
-    def load_plugin(self, file_path):
-        """Load a single plugin"""
-        module_name = f"plugin_{file_path.stem}"
+        # Get all .py files in plugins directory
+        plugin_files = list(self.plugins_dir.glob('*.py'))
         
-        spec = importlib.util.spec_from_file_location(module_name, file_path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        spec.loader.exec_module(module)
-        
-        # Call register function
-        if hasattr(module, 'register'):
-            module.register(self.app)
-            self.plugins.append(module)
-            self.app.log(f"Loaded plugin: {file_path.name}")
+        for plugin_file in plugin_files:
+            self._load_plugin(plugin_file)
+    
+    def _load_plugin(self, plugin_file: Path):
+        """Load single plugin"""
+        try:
+            # Load module
+            spec = importlib.util.spec_from_file_location(
+                plugin_file.stem,
+                plugin_file
+            )
             
-            # Add menu actions if provided
-            if hasattr(module, 'get_menu_actions'):
-                actions = module.get_menu_actions()
-                for action in actions:
-                    self.app.add_plugin_menu_action(action)
-        else:
-            raise Exception("Plugin must have a register() function")
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                
+                # Check if register function exists
+                if hasattr(module, 'register'):
+                    # Call register function
+                    module.register(self.api)
+                    
+                    self.plugins.append({
+                        'name': plugin_file.stem,
+                        'module': module,
+                        'path': plugin_file
+                    })
+                    
+                    self.api.log(f'プラグイン読み込み: {plugin_file.stem}')
+                else:
+                    self.api.log(f'プラグインエラー: register関数が見つかりません - {plugin_file.stem}')
+        
+        except Exception as e:
+            self.api.log(f'プラグイン読み込みエラー: {plugin_file.stem} - {e}')
     
-    def register_hook(self, name, callback):
-        """Register a hook callback"""
-        if name in self.hooks:
-            self.hooks[name].append(callback)
+    def reload_plugins(self):
+        """Reload all plugins"""
+        self.load_plugins()
     
-    def trigger_hook(self, name, *args, **kwargs):
-        """Trigger all callbacks for a hook"""
-        if name in self.hooks:
-            for callback in self.hooks[name]:
-                try:
-                    callback(*args, **kwargs)
-                except Exception as e:
-                    self.app.log(f"Plugin hook error ({name}): {e}")
+    def get_plugin_info(self) -> list:
+        """Get loaded plugin information"""
+        return [
+            {
+                'name': p['name'],
+                'path': str(p['path'])
+            }
+            for p in self.plugins
+        ]
